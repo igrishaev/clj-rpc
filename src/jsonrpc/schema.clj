@@ -4,14 +4,15 @@
    [clojure.spec.alpha :as s]))
 
 
-;; (alias 'c 'clojure.core)
+(declare make-schema)
 
+
+;; (alias 'c 'clojure.core)
 
 (defmulti pred->schema identity)
 
 
-(defmethod pred->schema :default [_]
-  nil)
+(defmethod pred->schema :default [_])
 
 
 (defmacro defpred [symbol schema]
@@ -25,6 +26,9 @@
 (defpred clojure.core/string?
   {:type :string})
 
+(defpred clojure.core/int?
+  {:type :integer})
+
 (defpred clojure.core/pos-int?
   {:type :integer
    :minimum 0})
@@ -36,6 +40,9 @@
 (defpred clojure.core/inst?
   {:type :date-time})
 
+(defpred clojure.core/nil?
+  {:type :null})
+
 (defpred clojure.core/uuid?
   {:type :string
    :pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"})
@@ -43,52 +50,56 @@
 (defpred clojure.core/float?
   {:type :number})
 
-
 (defn cons? [x]
   (instance? clojure.lang.Cons x))
-
 
 (defmulti expr->schema first)
 
 (defmethod expr->schema :default [_])
 
-
-(defmacro defexpr [init [form] & body]
-  `(defmethod expr->schema ~init
-     [~form]
+(defmacro defexpr [dispatch bindings  & body]
+  `(defmethod expr->schema ~dispatch
+     [~bindings]
      ~@body))
 
 
 (defexpr `s/keys
-  [form]
-  (let [mapping (apply hash-map (rest form))
+  [_ & {:keys [req req-un opt opt-un]}]
 
-        {:keys [req
-                req-un
-                opt
-                opt-un]} mapping]
+  {:type :object
+   :properties
+   (into {} (for [spec req-un]
+              [(name spec) (make-schema spec)]))
 
-    ;;
-    {:type :object
-     :properties
-     (into {} (for [spec req-un]
-                [(name spec) (make-schema spec)]))
-
-     :required
-     (for [spec req-un]
-       (name spec))}))
+   :required
+   (for [spec req-un]
+     (name spec))})
 
 
 (defexpr `s/coll-of
-  [form]
-  (let [[_ spec-item & args] form
-        arg-map (apply hash-map args)
-        {:keys [count
-                min-count
-                max-count]} arg-map]
-    ;;
-    {:type :array
-     :items (make-schema spec-item)}))
+  [_ spec-item & {:keys [count
+                         distinct
+                         min-count
+                         max-count]}]
+
+  (cond-> {:type :array
+           :items (make-schema spec-item)}
+
+    distinct
+    (assoc :uniqueItems true)
+
+    min-count
+    (assoc :minItems min-count)
+
+    max-count
+    (assoc :maxItems max-count)))
+
+
+
+(defexpr `s/tuple
+  [_ & specs]
+  {:type :array
+   :items (mapv make-schema specs)})
 
 
 (defn form->schema [form]
@@ -100,8 +111,7 @@
 (defmulti spec->schema identity)
 
 
-(defmethod spec->schema :default [spec]
-  nil)
+(defmethod spec->schema :default [_] nil)
 
 
 (defmacro defspec [spec schema]
@@ -109,11 +119,26 @@
      ~schema))
 
 
+(def default-schema {:type :any})
+
+
 (defn make-schema [spec]
   (merge
-   {:type :any}
-   (form->schema (some-> spec s/get-spec s/form))
-   (spec->schema spec)))
+   default-schema
+
+   (cond
+
+     (cons? spec)
+     (expr->schema spec)
+
+     (qualified-symbol? spec)
+     (pred->schema spec)
+
+     (qualified-keyword? spec)
+     (merge
+      (when-let [form (some-> spec s/get-spec s/form)]
+        (make-schema form))
+      (spec->schema spec)))))
 
 
 ;;
@@ -122,15 +147,16 @@
 
 (s/def ::address string?)
 
-(s/def ::addresses (s/coll-of ::address))
+(s/def ::addresses (s/coll-of ::address :min-count 2 :max-count 5 :distinct true))
 
 (s/def ::user
   (s/keys :req-un [::age
-                   ::addresses]))
+                   ::addresses
+                   ::bbbb]))
 
 (defspec ::age
   {:title "Age"
    :description "User age in years"})
 
-(defspec ::user
-  {:title "User"})
+
+(s/def ::xxx (s/tuple int? int? keyword?))
