@@ -21,11 +21,18 @@
 (s/def ::params
   (s/or :map ::params-map :vec vector?))
 
-(s/def ::rpc
+(s/def ::rpc-single
   (s/keys :req-un [::version
-                   ::method
-                   ::params]
-          :opt-un [::id]))
+                   ::method]
+          :opt-un [::id
+                   ::params]))
+
+(s/def ::rpc-batch
+  (s/coll-of ::rpc-single))
+
+(s/def ::rpc
+  (s/or :single ::rpc-single :batch ::rpc-batch))
+
 
 
 (defmacro with-conformer

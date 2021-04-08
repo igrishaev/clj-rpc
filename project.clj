@@ -9,11 +9,12 @@
 
   :dependencies [[clj-http "3.12.0"]
                  [cheshire "5.10.0"]
+                 [org.clojure/tools.logging "1.1.0"]
 
                  [ring/ring-jetty-adapter "1.7.1"]
                  [ring/ring-json "0.5.0"]
 
-                 ]
+                 [ch.qos.logback/logback-classic "1.2.3"]]
 
   :main ^:skip-aot jsonrpc.core
 
