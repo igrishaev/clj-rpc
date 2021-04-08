@@ -122,11 +122,33 @@
 (def default-schema {:type :any})
 
 
+(defmulti guess-type type)
+
+
+(defmethod guess-type String [_]
+  "string")
+
+(defmethod guess-type Integer [_]
+  "integer")
+
+(defmethod guess-type Long [_]
+  "integer")
+
+
+(defn enum->schema [spec]
+  (if (= 1 (count spec))
+    {:const (first spec)}
+    {:enum (into [] spec)}))
+
+
 (defn make-schema [spec]
   (merge
    default-schema
 
    (cond
+
+     (set? spec)
+     (enum->schema spec)
 
      (cons? spec)
      (expr->schema spec)
@@ -160,3 +182,6 @@
 
 
 (s/def ::xxx (s/tuple int? int? keyword?))
+
+
+(s/def ::bbb #{"sdfsd" "ffff" "sdfsdf"})
