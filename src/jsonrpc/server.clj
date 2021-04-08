@@ -104,6 +104,8 @@
           (let [{:keys [method params]}
                 payload
 
+                method (keyword method)
+
                 rpc-map
                 (get method->rpc-map* method)
 
@@ -130,7 +132,7 @@
                 _
                 (when (and spec-out validate-spec-out?)
                   (when-not (s/valid? spec-out result)
-                    (rpc-error! :internal-error)))]
+                    (rpc-error! :internal-error {:data (s/explain-data spec-out result)})))]
 
             {:status 200
              :body {:id id
@@ -138,6 +140,7 @@
                     :result result}})
 
           (catch Exception e
+            (println e)
             (let [{:keys [type
                           code
                           data
@@ -162,6 +165,8 @@
 
 (defn user-create [params])
 
+
+;; todo support fdef
 
 
 ;; handler symbol

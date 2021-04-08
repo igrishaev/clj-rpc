@@ -8,7 +8,12 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
 
   :dependencies [[clj-http "3.12.0"]
-                 [cheshire "5.10.0"]]
+                 [cheshire "5.10.0"]
+
+                 [ring/ring-jetty-adapter "1.7.1"]
+                 [ring/ring-json "0.5.0"]
+
+                 ]
 
   :main ^:skip-aot jsonrpc.core
 
