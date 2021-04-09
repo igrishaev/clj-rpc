@@ -16,6 +16,13 @@
 ;; drop version
 
 
+
+(defn explain-str [spec data]
+  (let [out (s/explain-str spec data)]
+    (when-not (= out "Success!\n")
+      out)))
+
+
 (def rpc-errors
   {:parse-error
    {:status 500
@@ -68,9 +75,9 @@
 
 
 (defn find-method
-  [{:as this :keys [config rpc-parsed]}]
+  [{:as this :keys [config rpc]}]
 
-  (let [{:keys [id method]} rpc-parsed
+  (let [{:keys [id method]} rpc
         {:keys [methods]} config
 
         rpc-map (get methods method)]
@@ -84,77 +91,92 @@
 
 
 (defn validate-params
-  [{:as this :keys [config rpc-map rpc-parsed]}]
+  [{:as this :keys [config rpc rpc-map]}]
 
-  (let [{:keys [id method]} rpc-parsed
+  (let [{:keys [id method params]}
+        rpc
 
-        {:keys [conform-in-spec?]}
+        {:keys [validate-in-spec?]}
         config
-
-        {:keys [params]} rpc-parsed
-
-        [_ params] params
 
         {:keys [spec-in
                 spec-out
                 handler]} rpc-map
 
-        params-parsed
-        (if (and conform-in-spec? spec-in)
-          (s/conform spec-in params)
-          params)]
+        validate?
+        (and validate-in-spec? spec-in)
 
-    (if (s/invalid? params-parsed)
+        explain
+        (when validate?
+          (explain-str spec-in params))]
 
-      (let [explain (s/explain-str spec-in params)]
-        (rpc-error! {:id id
-                     :type :invalid-params
-                     :data {:method method
-                            :explain explain}}))
-
-      (assoc this
-             :handler handler
-             :params params-parsed))))
+    (if explain
+      (rpc-error! {:id id
+                   :type :invalid-params
+                   :data {:method method
+                          :explain explain}})
+      this)))
 
 
 (defn execute-method
-  [{:as this :keys [handler params request]}]
-  (let [rpc-result
+  [{:as this :keys [config request rpc rpc-map]}]
+
+  (let [{:keys [params]} rpc
+        {:keys [handler]} rpc-map
+
+        ;; TODO assert handler
+
+        {:keys [pass-request-to-handler?]}
+        config
+
+        arg-list
         (if (vector? params)
-          (apply handler request params)
-          (handler request params))]
-    (assoc this :rpc-result rpc-result)))
+          params [params])
+
+        arg-list
+        (if pass-request-to-handler?
+          (cons request arg-list)
+          arg-list)
+
+        result
+        (apply handler arg-list)]
+
+    (assoc this :result result)))
 
 
 (defn validate-output
-  [{:as this :keys [config rpc-result rpc-map rpc-parsed]}]
+  [{:as this :keys [config result rpc rpc-map]}]
 
   (let [{:keys [spec-out]} rpc-map
 
         {:keys [validate-out-spec?]} config
 
-        {:keys [method]} rpc-parsed
+        {:keys [id method]} rpc
 
-        result
-        (when (and validate-out-spec? spec-out)
-          (s/valid? spec-out rpc-result))]
+        validate?
+        (and validate-out-spec? spec-out)
 
-    (if (s/invalid? result)
+        explain
+        (when validate?
+          (explain-str spec-out result))]
 
-      (let [explain (s/explain-str spec-out rpc-result)]
-        (rpc-error! {:type :internal-error
-                     :data {:method method}}))
+    (if explain
+      ;; TODO log
+
+      (rpc-error! {:id id
+                   :type :internal-error
+                   :data {:method method}})
 
       this)))
 
 
 (defn compose-response
-  [{:as this :keys [rpc-parsed rpc-result]}]
-  (let [{:keys [id version]} rpc-parsed]
+  [{:as this :keys [rpc result]}]
+  (let [{:keys [id version]} rpc]
     (when id
       {:id id
-       :version version
-       :result rpc-result})))
+       :jsonrpc version
+       :result result})))
 
 
 (def types-no-log
@@ -178,9 +200,15 @@
              :data data}}))
 
 
+(defn coerce-rpc
+  [this]
+  (update-in this [:rpc :method] keyword))
+
+
 (defn process-rpc-single
   [this]
   (-> this
+      coerce-rpc
       find-method
       validate-params
       execute-method
@@ -200,23 +228,27 @@
 
 
 (defn check-batch-limit
-  [{:as this :keys [config rpc-parsed]}]
+  [{:as this :keys [config rpc]}]
 
   (let [{:keys [max-batch-size]} config
-        batch-size (count rpc-parsed)
+
+        batch-size (count rpc)
+
+        {:keys [id]} rpc
 
         exeeded?
         (when max-batch-size
           (> batch-size max-batch-size))]
 
     (if exeeded?
-      (rpc-error! {:type :invalid-params
+      (rpc-error! {:id id
+                   :type :invalid-params
                    :message "Batch size is too large"})
       this)))
 
 
 (defn execute-batch
-  [{:as this :keys [config rpc-parsed]}]
+  [{:as this :keys [config rpc]}]
 
   (let [{:keys [parallel-batch?]} config
 
@@ -226,9 +258,9 @@
         fn-single
         (fn [rpc-single]
           (process-rpc-single
-             (assoc this :rpc-parsed rpc-single)))]
+             (assoc this :rpc rpc-single)))]
 
-    (fn-map fn-single rpc-parsed)))
+    (fn-map fn-single rpc)))
 
 
 (defn process-rpc-batch
@@ -243,22 +275,24 @@
 
   (let [{:keys [data-field]} config
 
-        payload
+        rpc
         (get request data-field)
 
-        rpc-parsed
-        (s/conform ::spec/rpc payload)]
+        explain
+        (explain-str ::spec/rpc rpc)
 
-    (if (s/invalid? rpc-parsed)
-      (let [explain (s/explain-str ::spec/rpc payload)]
-        (rpc-error! {:type :invalid-request
-                     :data {:explain explain}}))
+        batch?
+        (when-not explain
+          (vector? rpc))]
 
-      (let [[tag rpc-parsed] rpc-parsed
-            batch? (= tag :batch)]
-        (assoc this
-               :batch? batch?
-               :rpc-parsed rpc-parsed)))))
+    (if explain
+
+      (rpc-error! {:type :invalid-request
+                   :data {:explain explain}})
+
+      (assoc this
+             :rpc rpc
+             :batch? batch?))))
 
 
 (defn step-2-check-batch
@@ -272,33 +306,34 @@
 
 
 (defn step-3-process-rpc
-  [{:as this :keys [batch? rpc-parsed]}]
+  [{:as this :keys [batch?]}]
 
-  (let [rpc-result
+  (let [result
         (if batch?
           (process-rpc-batch this)
           (process-rpc-single this))]
 
-    (assoc this :rpc-result rpc-result)))
+    (assoc this :result result)))
 
 
 (defn step-4-http-response
-  [{:as this :keys [batch? rpc-result]}]
+  [{:as this :keys [batch? result]}]
 
   (if batch?
 
-    (let [rpc-result (remove nil? rpc-result)]
+    (let [result (remove nil? result)]
       {:status 200
-       :body rpc-result})
+       :body result})
 
-    (let [status (guess-http-status rpc-result)]
+    (let [status (guess-http-status result)]
       {:status status
-       :body rpc-result})))
+       :body result})))
 
 
 (def config-default
-  {:data-field :params
-   :conform-in-spec? true
+  {:pass-request-to-handler? true
+   :data-field :params
+   :validate-in-spec? true
    :validate-out-spec? true
    :allow-batch? true
    :max-batch-size 25

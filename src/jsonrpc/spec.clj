@@ -10,7 +10,7 @@
 
 
 (s/def ::id
-  (some-fn string? int?))
+  (s/or :int int? :string ::ne-string))
 
 (s/def ::version #{"2.0"})
 
