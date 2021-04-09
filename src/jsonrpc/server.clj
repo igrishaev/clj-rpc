@@ -18,8 +18,8 @@
 
 (def rpc-errors
   {:parse-error
-   {:status -32700
-    :code 500
+   {:status 500
+    :code -32700
     :message "Parse error"}
 
    :invalid-request
@@ -43,148 +43,241 @@
     :message "Internal error"}})
 
 
+(def into-map (partial into {}))
+
+
+(def code->status
+  (into-map
+   (map (juxt :code :status)
+        (vals rpc-errors))))
+
+
 (defn rpc-error!
   [params]
 
   (let [{:keys [type]} params
 
-        context
+        rpc-error
         (or (get rpc-errors type)
             (get rpc-errors :internal-error))
 
         data
-        (merge context params)]
+        (merge rpc-error params)]
 
     (throw (ex-info "RPC error" data))))
 
 
-(defn process-rpc-single
-  [config rpc request]
+(defn find-method
+  [{:as this :keys [config rpc-parsed]}]
 
-  (let [{:keys [id method params version]}
-        rpc
+  (let [{:keys [method]} rpc-parsed
+        {:keys [methods]} config
 
-        {:keys [conform-in-spec?
-                validate-out-spec?]}
+        rpc-map (get methods method)]
+
+    (if-not rpc-map
+      (rpc-error! {:type :not-found})
+      (assoc this
+             :rpc-map rpc-map))))
+
+
+(defn validate-params
+  [{:as this :keys [config rpc-map rpc-parsed]}]
+
+  (let [{:keys [method]} rpc-parsed
+
+        {:keys [conform-in-spec?]}
         config
 
-        [_ id] id
+        {:keys [params]} rpc-parsed
 
-        notification? (some? id)]
+        [_ params] params
 
-    (try
+        {:keys [spec-in
+                spec-out
+                handler]} rpc-map
 
-      (let [method (keyword method)
+        params-parsed
+        (if (and conform-in-spec? spec-in)
+          (s/conform spec-in params)
+          params)]
 
-            rpc-map
-            (get-in config [:methods method])
+    (if (s/invalid? params-parsed)
 
-            _
-            (when-not rpc-map
-              (rpc-error! {:type :not-found
-                           :data {:method method}}))
+      (let [explain (s/explain-str spec-in params)]
+        (rpc-error! {:type :invalid-params
+                     :data {:method method
+                            :explain explain}}))
 
-            {:keys [spec-in
-                    spec-out
-                    handler]} rpc-map
+      (assoc this
+             :handler handler
+             :params params-parsed))))
 
-            params
-            (if (and conform-in-spec? spec-in)
-              (s/conform spec-in params)
-              params)
 
-            _
-            (when (s/invalid? params)
-              (let [explain (s/explain-str spec-in params)]
-                (rpc-error! {:type :invalid-params
-                             :data {:method method
-                                    :explain explain}})))
+(defn execute-method
+  [{:as this :keys [handler params request]}]
+  (let [rpc-result
+        (handler params request)]
+    (assoc this :rpc-result rpc-result)))
 
-            result
-            (try
-              (handler params request)
-              (catch Throwable e
-                (log/errorf e "Handler error, id: %s, method: %s, params: %s"
-                            id method params)
-                (rpc-error! {:type :internal-error
-                             :data {:method method}})))
 
-            _
-            (when (and validate-out-spec? spec-out)
-              (when-not (s/valid? spec-out result)
-                (let [explain (s/explain-str spec-out result)]
-                  (log/errorf "Invalid out spec, id: %s, method: %s, explain: %s"
-                              id method explain))
-                (rpc-error! {:type :internal-error
-                             :data {:method method}})))]
+(defn validate-output
+  [{:as this :keys [config rpc-result rpc-map rpc-parsed]}]
 
-        (when-not notification?
-          {:id id
-           :version version
-           :result result}))
+  (let [{:keys [spec-out]} rpc-map
 
-      (catch Throwable e
-        (let [{:keys [type data message code]}
-              (ex-data e)]
-          {:id id
-           :version version
-           :error {:code code
-                   :message message
-                   :data data}})))))
+        {:keys [validate-out-spec?]} config
+
+        {:keys [method]} rpc-parsed
+
+        result
+        (when (and validate-out-spec? spec-out)
+          (s/valid? spec-out rpc-result))]
+
+    (if (s/invalid? result)
+
+      (let [explain (s/explain-str spec-out rpc-result)]
+        (rpc-error! {:type :internal-error
+                     :data {:method method}}))
+
+      this)))
+
+
+(defn compose-response
+  [{:as this :keys [rpc-parsed rpc-result]}]
+  (let [{:keys [id version]} rpc-parsed]
+    (when id
+      {:id id
+       :version version
+       :result rpc-result})))
+
+
+(defn process-rpc-single
+  [this]
+
+  (-> this
+      find-method
+      validate-params
+      execute-method
+      validate-output
+      compose-response
+
+      (try
+        (catch Throwable e
+          (log/error e)
+
+          (let [{:keys [code message data]}
+                (ex-data e)]
+
+            {:error {:code code
+                     :message message
+                     :data data}})))))
 
 
 (defn guess-http-status [response]
-  (if (:error response)
-    500
-    200))
+  (-> response
+      :error
+      :code
+      (->> (get code->status))
+      (or 500)))
 
 
-(defn process-rpc-batch
-  [config rpc-list request]
+(defn check-batch-limit
+  [{:as this :keys [config rpc-parsed]}]
 
-  (let [{:keys [parallel-batch?
-                max-batch-size]} config
+  (let [{:keys [max-batch-size]} config
+        batch-size (count rpc-parsed)
 
-        exceeded?
+        exeeded?
         (when max-batch-size
-          (> (count rpc-list) max-batch-size))
+          (> batch-size max-batch-size))]
 
-        _
-        (when exceeded?
-          (rpc-error! {:type :invalid-params
-                       :message "Batch size is too large"}))
+    (if exeeded?
+      (rpc-error! {:type :invalid-params
+                   :message "Batch size is too large"})
+      this)))
+
+
+(defn execute-batch
+  [{:as this :keys [config rpc-parsed]}]
+
+  (let [{:keys [parallel-batch?]} config
 
         fn-map
         (if parallel-batch? pmap map)
 
         fn-single
-        (fn [rpc]
-          (process-rpc-single config rpc request))]
+        (fn [rpc-single]
+          (process-rpc-single
+             (assoc this :rpc-parsed rpc-single)))]
 
-    (fn-map fn-single rpc-list)))
+    (fn-map fn-single rpc-parsed)))
 
 
+(defn process-rpc-batch
+  [this]
+  (-> this
+      check-batch-limit
+      execute-batch))
 
-#_
-{:data-field :params
- :conform-in-spec? true
- :validate-out-spec? true
- :allow-batch? true
- :max-batch-size 20
- :parallel-batch? false
- :methods
- {:users/get-by-id
-  {:title "Get a user by ID"
-   :description "Some long description of the method"
-   :handler 'project.handler.user/get-by-id
-   :spec-in :user/get-by-id.in
-   :spec-out :user/get-by-id.out}
-  :users/create-user
-  {:title "Get a user by ID"
-   :description "Some long description of the method"
-   :handler 'project.handler.user/create
-   :spec-in :user/create.in
-   :spec-out :user/create.out}}}
+
+(defn step-1-parse-payload
+  [{:as this :keys [config request]}]
+
+  (let [{:keys [data-field]} config
+
+        payload
+        (get request data-field)
+
+        rpc-parsed
+        (s/conform ::spec/rpc payload)]
+
+    (if (s/invalid? rpc-parsed)
+      (let [explain (s/explain-str ::spec/rpc payload)]
+        (rpc-error! {:type :invalid-request
+                     :data {:explain explain}}))
+
+      (let [[tag rpc-parsed] rpc-parsed
+            batch? (= tag :batch)]
+        (assoc this
+               :batch? batch?
+               :rpc-parsed rpc-parsed)))))
+
+
+(defn step-2-check-batch
+  [{:as this :keys [config batch?]}]
+
+  (let [{:keys [allow-batch?]} config]
+
+    (if (and batch? (not allow-batch?))
+      (rpc-error! {:type :invalid-request})
+      this)))
+
+
+(defn step-3-process-rpc
+  [{:as this :keys [batch? rpc-parsed]}]
+
+  (let [rpc-result
+        (if batch?
+          (process-rpc-batch this)
+          (process-rpc-single this))]
+
+    (assoc this :rpc-result rpc-result)))
+
+
+(defn step-4-http-response
+  [{:as this :keys [batch? rpc-result]}]
+
+  (if batch?
+
+    (let [rpc-result (remove nil? rpc-result)]
+      {:status 200
+       :body rpc-result})
+
+    (let [status (guess-http-status rpc-result)]
+      {:status status
+       :body rpc-result})))
+
 
 (def config-default
   {:data-field :params
@@ -195,6 +288,61 @@
    :parallel-batch? true})
 
 
+(defn make-handler
+  [config]
+  (fn [request]
+
+    (-> {:config (merge config-default config)
+         :request request}
+
+        step-1-parse-payload
+        step-2-check-batch
+        step-3-process-rpc
+        step-4-http-response
+
+        (try
+          (catch Throwable e
+            (log/error e)
+
+            (let [{:keys [status code message data]}
+                  (ex-data e)]
+
+              {:status (or status 500)
+               :body {:error {:code code
+                              :message message
+                              :data data}}}))))))
+
+
+
+;;;;;;;;;
+
+
+
+#_
+(defn ensure-fn [obj]
+  (cond
+
+    (fn? obj)
+    obj
+
+    (and (var? obj) (fn? @obj))
+    obj
+
+    (and (symbol? obj) (resolve obj))
+    (resolve obj)
+
+    :else
+    (throw (new Exception (format "Wrong function: %s" obj)))))
+
+
+#_
+(defn prepare-rpc-mapping
+  [method->rpc-map]
+  (into {} (for [[k v] method->rpc-map]
+             [k (update v :handler ensure-fn)])))
+
+
+#_
 (defn make-handler
   [config]
 
@@ -243,31 +391,3 @@
           {:status 500
            :body {:error {:code -32600
                           :message "sdfsfds"}}})))))
-
-
-;;;;;;;;;
-
-
-
-#_
-(defn ensure-fn [obj]
-  (cond
-
-    (fn? obj)
-    obj
-
-    (and (var? obj) (fn? @obj))
-    obj
-
-    (and (symbol? obj) (resolve obj))
-    (resolve obj)
-
-    :else
-    (throw (new Exception (format "Wrong function: %s" obj)))))
-
-
-#_
-(defn prepare-rpc-mapping
-  [method->rpc-map]
-  (into {} (for [[k v] method->rpc-map]
-             [k (update v :handler ensure-fn)])))

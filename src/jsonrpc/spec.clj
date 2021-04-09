@@ -9,11 +9,13 @@
   (s/and string? (complement str/blank?)))
 
 
-(s/def ::id (s/or :string string? :int int?))
+(s/def ::id
+  (some-fn string? int?))
 
 (s/def ::version #{"2.0"})
 
-(s/def ::method ::ne-string)
+(s/def ::method
+  (s/and ::ne-string (s/conformer keyword)))
 
 (s/def ::params-map
   (s/map-of keyword? any?))
