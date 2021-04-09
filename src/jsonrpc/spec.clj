@@ -15,7 +15,7 @@
 (s/def ::version #{"2.0"})
 
 (s/def ::method
-  (s/and ::ne-string (s/conformer keyword)))
+  (s/or :keyword keyword? :string ::ne-string))
 
 (s/def ::params-map
   (s/map-of keyword? any?))

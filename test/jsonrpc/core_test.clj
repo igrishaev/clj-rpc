@@ -56,7 +56,7 @@
 (deftest test-handler-ok
 
   (let [rpc {:id 1
-             :method "math/sum"
+             :method :math/sum
              :params [1 2]
              :version "2.0"}
         request {:params rpc}
