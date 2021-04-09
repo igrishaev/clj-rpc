@@ -40,7 +40,11 @@
 
 
 (def config
-  {:methods
+  {:overrides
+   {:math/sum
+    {:allow-batch? false}}
+
+   :handlers
    {:math/sum
     {:handler #'rpc-sum
      :spec-in :math/sum.in
@@ -110,19 +114,21 @@
 
         config*
         (assoc-in config
-                  [:methods :user/create :spec-out]
+                  [:handlers :user/create :spec-out]
                   :user/create.out-wrong)
 
         handler (server/make-handler config*)
 
         response (handler request)]
 
-    (is (= {:status 500
-            :body {:id 1
-                   :jsonrpc "2.0"
-                   :error {:code -32603
-                           :message "Internal error"
-                           :data {:method :user/create}}}}
+    (is (=
+
+         {:status 500
+          :body {:id 1
+                 :jsonrpc "2.0"
+                 :error {:code -32603
+                         :message "Internal error"
+                         :data {:method :user/create}}}}
 
            response))))
 
@@ -228,4 +234,9 @@
 ;; batch exception
 ;; batch allowed?
 ;; batch limit
-;; batach notification
+;; batch notification
+;; batch parallel
+;; method overrides
+
+;; in-validation off
+;; out-validation off

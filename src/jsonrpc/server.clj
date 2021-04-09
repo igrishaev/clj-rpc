@@ -15,6 +15,7 @@
 ;; better explain (expound?)
 ;; drop version
 
+;; method overrides
 
 
 (defn explain-str [spec data]
@@ -78,20 +79,20 @@
   [{:as this :keys [config rpc]}]
 
   (let [{:keys [id method]} rpc
-        {:keys [methods]} config
+        {:keys [handlers]} config
 
-        rpc-map (get methods method)]
+        handler-map (get handlers method)]
 
-    (if-not rpc-map
+    (if-not handler-map
       (rpc-error! {:id id
                    :type :not-found
                    :data {:method method}})
       (assoc this
-             :rpc-map rpc-map))))
+             :handler-map handler-map))))
 
 
 (defn validate-params
-  [{:as this :keys [config rpc rpc-map]}]
+  [{:as this :keys [config rpc handler-map]}]
 
   (let [{:keys [id method params]}
         rpc
@@ -101,7 +102,7 @@
 
         {:keys [spec-in
                 spec-out
-                handler]} rpc-map
+                handler]} handler-map
 
         validate?
         (and validate-in-spec? spec-in)
@@ -119,10 +120,10 @@
 
 
 (defn execute-method
-  [{:as this :keys [config request rpc rpc-map]}]
+  [{:as this :keys [config request rpc handler-map]}]
 
   (let [{:keys [params]} rpc
-        {:keys [handler]} rpc-map
+        {:keys [handler]} handler-map
 
         ;; TODO assert handler (symbol)
 
@@ -145,9 +146,9 @@
 
 
 (defn validate-output
-  [{:as this :keys [config result rpc rpc-map]}]
+  [{:as this :keys [config result rpc handler-map]}]
 
-  (let [{:keys [spec-out]} rpc-map
+  (let [{:keys [spec-out]} handler-map
 
         {:keys [validate-out-spec?]} config
 
