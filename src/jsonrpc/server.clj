@@ -120,7 +120,9 @@
 (defn execute-method
   [{:as this :keys [handler params request]}]
   (let [rpc-result
-        (handler params request)]
+        (if (vector? params)
+          (apply handler request params)
+          (handler request params))]
     (assoc this :rpc-result rpc-result)))
 
 

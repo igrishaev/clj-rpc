@@ -15,18 +15,41 @@
 
 
 (defn rpc-sum
-  [[a b] _]
+  [_ a b]
   (+ a b))
+
+
+(defn user-create
+  [_ {:keys [name age email]}]
+  {:id 100
+   :name name
+   :age age
+   :email email})
+
+
+(s/def :user/create.in
+  (s/keys :req-un [:user/name
+                   :user/age
+                   :user/email]))
+
+(s/def :user/create.out
+  (s/keys :req-un [:user/id
+                   :user/name
+                   :user/age
+                   :user/email]))
 
 
 (def config
   {:methods
    {:math/sum
-    {:title "Sum numbers"
-     :description "Some long description of the method"
-     :handler #'rpc-sum
+    {:handler #'rpc-sum
      :spec-in :math/sum.in
-     :spec-out :math/sum.out}}})
+     :spec-out :math/sum.out}
+
+    :user/create
+    {:hander user-create
+     :spec-in :user/create.in
+     :spec-out :user/create.out}}})
 
 
 (deftest test-handler-ok
@@ -45,10 +68,10 @@
            response))))
 
 
-(deftest test-handler-not-found
+(deftest test-handler-ok
 
   (let [rpc {:id 1
-             :method "math/dunno"
+             :method "math/sum"
              :params [1 2]
              :version "2.0"}
         request {:params rpc}
@@ -56,14 +79,32 @@
 
         response (handler request)]
 
-    (is (= {:status 404
+    (is (= {:status 200
+            :body {:id 1 :version "2.0" :result 3}}
+           response))))
+
+
+(deftest test-handler-map-params
+
+  (let [rpc {:id 1
+             :method "user/create"
+             :params {:name "Ivan"
+                      :age 35
+                      :email "test@testc.com"}
+             :version "2.0"}
+        request {:params rpc}
+        handler (server/make-handler config)
+
+        response (handler request)]
+
+    (is (= {:status 200
             :body
             {:id 1
              :jsonrpc "2.0"
-             :error {:code -32601
-                     :message "Method not found"
-                     :data {:method :math/dunno}}}}
-
+             :result {:id 100
+                      :name "Ivan"
+                      :age 35
+                      :email "test@testc.com"}}}
            response))))
 
 
