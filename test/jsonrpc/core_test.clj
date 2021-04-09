@@ -67,5 +67,40 @@
            response))))
 
 
-(deftest a-test
-  )
+(deftest test-handler-notify-ok
+
+  (let [rpc {:method "math/sum"
+             :params [1 2]
+             :version "2.0"}
+        request {:params rpc}
+        handler (server/make-handler config)
+
+        response (handler request)]
+
+    (is (= {:status 200 :body nil}
+           response))))
+
+
+(deftest test-handler-wrong-params
+
+  (let [rpc {:id 1
+             :method "math/sum"
+             :params [1 nil]
+             :version "2.0"}
+        request {:params rpc}
+        handler (server/make-handler config)
+
+        response (handler request)]
+
+    (is (= {:status 400
+            :body
+            {:id 1
+             :jsonrpc "2.0"
+             :error {:code -32602
+                     :message "Invalid params"
+                     :data
+                     {:method :math/sum
+                      :explain
+                      "nil - failed: number? in: [1] at: [1] spec: :math/sum.in\n"}}}}
+
+           response))))

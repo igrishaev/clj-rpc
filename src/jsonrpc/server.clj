@@ -86,7 +86,7 @@
 (defn validate-params
   [{:as this :keys [config rpc-map rpc-parsed]}]
 
-  (let [{:keys [method]} rpc-parsed
+  (let [{:keys [id method]} rpc-parsed
 
         {:keys [conform-in-spec?]}
         config
@@ -107,7 +107,8 @@
     (if (s/invalid? params-parsed)
 
       (let [explain (s/explain-str spec-in params)]
-        (rpc-error! {:type :invalid-params
+        (rpc-error! {:id id
+                     :type :invalid-params
                      :data {:method method
                             :explain explain}}))
 
