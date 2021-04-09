@@ -124,7 +124,7 @@
   (let [{:keys [params]} rpc
         {:keys [handler]} rpc-map
 
-        ;; TODO assert handler
+        ;; TODO assert handler (symbol)
 
         {:keys [pass-request-to-handler?]}
         config
@@ -385,61 +385,3 @@
 
     :else
     (throw (new Exception (format "Wrong function: %s" obj)))))
-
-
-#_
-(defn prepare-rpc-mapping
-  [method->rpc-map]
-  (into {} (for [[k v] method->rpc-map]
-             [k (update v :handler ensure-fn)])))
-
-
-#_
-(defn make-handler
-  [config]
-
-  (let [config
-        (merge config-default config)
-
-        {:keys [data-field
-                allow-batch?]} config]
-
-    (fn [request]
-
-      (try
-
-        (let [payload
-              (get request data-field)
-
-              parsed
-              (s/conform ::spec/rpc payload)
-
-              _
-              (when (s/invalid? parsed)
-                (rpc-error! {:type :invalid-request}))
-
-              [tag rpc] parsed]
-
-          (when (and (= tag :batch)
-                     (not allow-batch?))
-            (rpc-error! {:type :invalid-params
-                         :message "Batch requests are not allowed"}))
-
-          (case tag
-            :single
-            (let [response (process-rpc-single config rpc request)
-                  status (guess-http-status response)]
-              {:status status
-               :body response})
-
-            :batch
-            (let [response (process-rpc-batch config rpc request)
-                  response (remove nil? response)]
-              {:status 200
-               :body response})))
-
-        (catch Throwable e
-          ;; (log/error e ...)
-          {:status 500
-           :body {:error {:code -32600
-                          :message "sdfsfds"}}})))))
