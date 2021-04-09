@@ -154,36 +154,46 @@
        :result rpc-result})))
 
 
+(def types-no-log
+  #{:invalid-request
+    :not-found
+    :invalid-params})
+
+
+(defn rpc-single-error-handler
+  [e]
+  (let [{:keys [id code message data]}
+        (ex-data e)]
+
+    (when-not (contains? types-no-log type)
+      (log/error e))
+
+    {:id id
+     :jsonrpc "2.0"
+     :error {:code code
+             :message message
+             :data data}}))
+
+
 (defn process-rpc-single
   [this]
-
   (-> this
       find-method
       validate-params
       execute-method
       validate-output
       compose-response
-
       (try
         (catch Throwable e
-          (log/error e)
-
-          (let [{:keys [id code message data]}
-                (ex-data e)]
-
-            {:id id
-             :jsonrpc "2.0"
-             :error {:code code
-                     :message message
-                     :data data}})))))
+          (rpc-single-error-handler e)))))
 
 
-(defn guess-http-status [response]
-  (-> response
-      :error
-      :code
-      (->> (get code->status))
-      (or 500)))
+(defn guess-http-status
+  [{:keys [error]}]
+  (if error
+    (let [{:keys [code]} error]
+      (get code->status code 500))
+    200))
 
 
 (defn check-batch-limit
