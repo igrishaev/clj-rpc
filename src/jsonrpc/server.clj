@@ -70,13 +70,15 @@
 (defn find-method
   [{:as this :keys [config rpc-parsed]}]
 
-  (let [{:keys [method]} rpc-parsed
+  (let [{:keys [id method]} rpc-parsed
         {:keys [methods]} config
 
         rpc-map (get methods method)]
 
     (if-not rpc-map
-      (rpc-error! {:type :not-found})
+      (rpc-error! {:id id
+                   :type :not-found
+                   :data {:method method}})
       (assoc this
              :rpc-map rpc-map))))
 
@@ -166,10 +168,12 @@
         (catch Throwable e
           (log/error e)
 
-          (let [{:keys [code message data]}
+          (let [{:keys [id code message data]}
                 (ex-data e)]
 
-            {:error {:code code
+            {:id id
+             :jsonrpc "2.0"
+             :error {:code code
                      :message message
                      :data data}})))))
 

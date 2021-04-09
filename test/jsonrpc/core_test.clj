@@ -58,10 +58,11 @@
 
     (is (= {:status 404
             :body
-            {:error
-             {:code -32601
-              :message "Method not found"
-              :data nil}}}
+            {:id 1
+             :jsonrpc "2.0"
+             :error {:code -32601
+                     :message "Method not found"
+                     :data {:method :math/dunno}}}}
 
            response))))
 
