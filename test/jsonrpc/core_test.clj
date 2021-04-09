@@ -172,7 +172,7 @@
               :method "math/sum"
               :params [1 2]
               :version "2.0"}
-             {:id 3
+             {:id 2
               :method "math/sum"
               :params [3 4]
               :version "2.0"}]
@@ -184,5 +184,48 @@
     (is (= {:status 200
             :body
             [{:id 1 :jsonrpc "2.0" :result 3}
-             {:id 3 :jsonrpc "2.0" :result 7}]}
+             {:id 2 :jsonrpc "2.0" :result 7}]}
            response))))
+
+
+(deftest test-handler-batch-one-fails
+
+  (let [rpc [{:id 1
+              :method "math/sum"
+              :params [1 2]
+              :version "2.0"}
+             {:id 2
+              :method "math/sum"
+              :params [3 nil]
+              :version "2.0"}
+             {:id 3
+              :method "math/sum"
+              :params [5 6]
+              :version "2.0"}]
+
+        request {:params rpc}
+        handler (server/make-handler config)
+
+        response (handler request)]
+
+    (is (=
+
+         {:status 200
+          :body
+          [{:id 1 :jsonrpc "2.0" :result 3}
+           {:id 2
+            :jsonrpc "2.0"
+            :error
+            {:code -32602
+             :message "Invalid params"
+             :data {:method :math/sum
+                    :explain "nil - failed: number? in: [1] at: [1] spec: :math/sum.in\n"}}}
+           {:id 3 :jsonrpc "2.0" :result 11}]}
+
+         response))))
+
+
+;; batch exception
+;; batch allowed?
+;; batch limit
+;; batach notification
