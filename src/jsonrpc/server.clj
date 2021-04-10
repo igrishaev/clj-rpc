@@ -7,6 +7,9 @@
    [clojure.spec.alpha :as s]))
 
 
+;; make name
+;; init multiproject
+
 ;; check specs in config
 ;; check functions in config
 ;; auto-load func ns in config
@@ -16,6 +19,13 @@
 ;; drop version
 
 ;; method overrides
+
+;; spec for config
+;; validate config in handler
+
+;; hadnler overrides
+;; discover handler
+;; rename fucntions
 
 
 (defn explain-str [spec data]
